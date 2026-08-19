@@ -1,4 +1,5 @@
 import html
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import streamlit as st
 
 from evaluate import evaluate_model
 from pipeline.scam_detection.detector import ScamDetector
+from utils import AUDIT_LOG_FILE
 
 
 st.set_page_config(page_title="Sentinel | Scam Detection", page_icon="🛡️", layout="wide")
@@ -52,11 +54,27 @@ def result_card(result):
     st.markdown(f'<div class="result-card {tone}"><div class="result-label">{signal}</div><div class="result-value">{html.escape(label)}</div><div class="result-desc">{desc}</div></div>', unsafe_allow_html=True)
 
 
+def load_audit_events():
+    """Return audit events from the shared detector log, newest first."""
+    if not AUDIT_LOG_FILE.exists():
+        return []
+
+    events = []
+    with AUDIT_LOG_FILE.open("r", encoding="utf-8") as audit_log:
+        for line in audit_log:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                # Ignore a partial/corrupt line rather than hiding valid prior events.
+                continue
+    return list(reversed(events))
+
+
 inject_styles()
 detector = ScamDetector()
 st.markdown('''<div class="hero"><div class="brand"><div class="brand-mark">🛡</div><div><div class="eyebrow">Personal security layer</div><div class="brand-name">SENTINEL</div></div></div><div class="system-live"><span class="live-dot"></span> PROTECTION ENGINE ONLINE</div></div><div class="hero-copy"><h1>Know the threat before<br>it reaches you.</h1><p>Analyze suspicious messages for the patterns scammers use to create urgency, steal credentials, and take your money.</p></div><div class="feature-row"><div class="feature"><span>◈</span> LINK &amp; URGENCY SIGNALS</div><div class="feature"><span>◈</span> SOCIAL ENGINEERING</div><div class="feature"><span>◈</span> AI-POWERED REVIEW</div></div>''', unsafe_allow_html=True)
 
-tab1, tab2 = st.tabs(["Message scanner", "Dataset evaluation"])
+tab1, tab2, tab3 = st.tabs(["Message scanner", "Dataset evaluation", "Audit logs"])
 with tab1:
     st.markdown('<div class="glass"><div class="eyebrow">01 / Scan message</div><h3 style="margin:4px 0 16px;">Run a threat check</h3>', unsafe_allow_html=True)
     user_input = st.text_area("Paste a text, email, or direct message", height=150, placeholder="Example: Congratulations! You have won $1,000. Claim it now before your reward expires...")
@@ -100,3 +118,31 @@ with tab2:
                     a, b, c = st.columns(3); a.metric("Overall accuracy", f"{results['overall_accuracy']}%"); b.metric("Messages scanned", results["total_predictions"]); c.metric("Correct predictions", results["correct_predictions"])
                     st.info(results["summary"])
         except Exception as exc: st.error(f"Could not load this dataset: {exc}")
+
+with tab3:
+    st.markdown('<div class="glass"><div class="eyebrow">03 / Audit trail</div><h3 style="margin:4px 0 8px;">Scan activity</h3><p style="color:#91a7bd;margin-top:0;">This view shows the same persistent log created by the detection pipeline. It may contain sensitive scanned messages.</p></div>', unsafe_allow_html=True)
+    if st.button("Refresh audit logs", type="primary"):
+        st.rerun()
+
+    try:
+        audit_events = load_audit_events()
+        if not audit_events:
+            st.info("No scan events yet. Run a message scan, then return here and refresh.")
+        else:
+            st.caption(f"Showing the latest {len(audit_events):,} event(s) from {AUDIT_LOG_FILE.name}")
+            summary_rows = [
+                {
+                    "timestamp": event.get("timestamp"),
+                    "event": event.get("event"),
+                    "request_id": event.get("request_id"),
+                    "model": event.get("model"),
+                }
+                for event in audit_events
+            ]
+            st.dataframe(summary_rows, use_container_width=True, hide_index=True)
+            for index, event in enumerate(audit_events):
+                title = f"{event.get('timestamp', 'Unknown time')} · {event.get('event', 'event')}"
+                with st.expander(title):
+                    st.json(event)
+    except OSError as exc:
+        st.error(f"Could not read audit logs: {exc}")
