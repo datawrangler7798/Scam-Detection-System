@@ -1,10 +1,11 @@
 # pipeline/scam_detector/detector.py
 
 from typing import List, Dict, Any
+from uuid import uuid4
 from .builder import build_prompt
 from .executor import LLMExecutor
 from .parser import OutputParser
-from utils import get_logger
+from utils import get_logger, log_audit_event
 
 logger = get_logger(__name__)
 
@@ -20,18 +21,51 @@ class ScamDetector:
 
     def detect(self, message: str) -> Dict[str, Any]:
         """Runs scam detection on a single message."""
+        request_id = str(uuid4())
+        model_name = self.executor.llm.model_name
         logger.info(f"Starting detection for message length: {len(message)}")
+        log_audit_event(
+            "scan_started",
+            request_id=request_id,
+            strategy=self.strategy,
+            model=model_name,
+            user_input=message,
+        )
         try:
             # The 3-step pipeline
             prompt = build_prompt(message, self.strategy)
+            log_audit_event(
+                "model_request",
+                request_id=request_id,
+                model=model_name,
+                prompt=prompt,
+            )
             raw_response = self.executor.execute(prompt)
+            log_audit_event(
+                "model_response",
+                request_id=request_id,
+                model=model_name,
+                raw_model_output=raw_response,
+            )
             parsed_result = self.parser.parse_llm_output(raw_response)
+            log_audit_event(
+                "scan_completed",
+                request_id=request_id,
+                model=model_name,
+                parsed_output=parsed_result,
+            )
 
             logger.info(f"Detection successful. Result: {parsed_result.get('label', 'Unknown')}")
             return parsed_result
 
         except Exception as e:
             logger.error(f"Detection pipeline failed: {e}")
+            log_audit_event(
+                "scan_failed",
+                request_id=request_id,
+                model=model_name,
+                error=str(e),
+            )
             # Re-raise the exception to be handled by the caller (UI layer)
             raise
 
