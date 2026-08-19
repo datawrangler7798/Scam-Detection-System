@@ -1,5 +1,4 @@
 import html
-import json
 import sys
 from pathlib import Path
 
@@ -11,7 +10,6 @@ import streamlit as st
 
 from evaluate import evaluate_model
 from pipeline.scam_detection.detector import ScamDetector
-from utils import AUDIT_LOG_FILE
 
 
 st.set_page_config(page_title="Sentinel | Scam Detection", page_icon="🛡️", layout="wide")
@@ -54,62 +52,11 @@ def result_card(result):
     st.markdown(f'<div class="result-card {tone}"><div class="result-label">{signal}</div><div class="result-value">{html.escape(label)}</div><div class="result-desc">{desc}</div></div>', unsafe_allow_html=True)
 
 
-def load_audit_events():
-    """Return audit events from the shared detector log, newest first."""
-    if not AUDIT_LOG_FILE.exists():
-        return []
-
-    events = []
-    with AUDIT_LOG_FILE.open("r", encoding="utf-8") as audit_log:
-        for line in audit_log:
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                # Ignore a partial/corrupt line rather than hiding valid prior events.
-                continue
-    return list(reversed(events))
-
-
-def build_scan_logs(events):
-    """Combine individual pipeline events into one readable record per scan."""
-    scans = {}
-    for event in events:
-        request_id = event.get("request_id")
-        if not request_id:
-            continue
-        scan = scans.setdefault(
-            request_id,
-            {
-                "request_id": request_id,
-                "timestamp": event.get("timestamp"),
-                "model": event.get("model"),
-                "strategy": event.get("strategy"),
-                "user_input": None,
-                "prompt": None,
-                "raw_model_output": None,
-                "parsed_output": None,
-                "error": None,
-                "status": "In progress",
-            },
-        )
-        scan["timestamp"] = scan["timestamp"] or event.get("timestamp")
-        scan["model"] = scan["model"] or event.get("model")
-        scan["strategy"] = scan["strategy"] or event.get("strategy")
-        for field in ("user_input", "prompt", "raw_model_output", "parsed_output", "error"):
-            if field in event:
-                scan[field] = event[field]
-        if event.get("event") == "scan_completed":
-            scan["status"] = "Completed"
-        elif event.get("event") == "scan_failed":
-            scan["status"] = "Failed"
-    return sorted(scans.values(), key=lambda scan: scan["timestamp"] or "", reverse=True)
-
-
 inject_styles()
 detector = ScamDetector()
 st.markdown('''<div class="hero"><div class="brand"><div class="brand-mark">🛡</div><div><div class="eyebrow">Personal security layer</div><div class="brand-name">SENTINEL</div></div></div><div class="system-live"><span class="live-dot"></span> PROTECTION ENGINE ONLINE</div></div><div class="hero-copy"><h1>Know the threat before<br>it reaches you.</h1><p>Analyze suspicious messages for the patterns scammers use to create urgency, steal credentials, and take your money.</p></div><div class="feature-row"><div class="feature"><span>◈</span> LINK &amp; URGENCY SIGNALS</div><div class="feature"><span>◈</span> SOCIAL ENGINEERING</div><div class="feature"><span>◈</span> AI-POWERED REVIEW</div></div>''', unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["Message scanner", "Dataset evaluation", "Audit logs"])
+tab1, tab2 = st.tabs(["Message scanner", "Dataset evaluation"])
 with tab1:
     st.markdown('<div class="glass"><div class="eyebrow">01 / Scan message</div><h3 style="margin:4px 0 16px;">Run a threat check</h3>', unsafe_allow_html=True)
     user_input = st.text_area("Paste a text, email, or direct message", height=150, placeholder="Example: Congratulations! You have won $1,000. Claim it now before your reward expires...")
@@ -153,42 +100,3 @@ with tab2:
                     a, b, c = st.columns(3); a.metric("Overall accuracy", f"{results['overall_accuracy']}%"); b.metric("Messages scanned", results["total_predictions"]); c.metric("Correct predictions", results["correct_predictions"])
                     st.info(results["summary"])
         except Exception as exc: st.error(f"Could not load this dataset: {exc}")
-
-with tab3:
-    st.markdown('<div class="glass"><div class="eyebrow">03 / Audit trail</div><h3 style="margin:4px 0 8px;">Scan activity</h3><p style="color:#91a7bd;margin-top:0;">This view shows the same persistent log created by the detection pipeline. It may contain sensitive scanned messages.</p></div>', unsafe_allow_html=True)
-    if st.button("Refresh audit logs", type="primary"):
-        st.rerun()
-
-    try:
-        audit_events = load_audit_events()
-        scan_logs = build_scan_logs(audit_events)
-        if not scan_logs:
-            st.info("No scan events yet. Run a message scan, then return here and refresh.")
-        else:
-            st.caption(f"Showing {len(scan_logs):,} complete scan log(s) from {AUDIT_LOG_FILE.name}")
-            summary_rows = [
-                {
-                    "timestamp": scan["timestamp"],
-                    "status": scan["status"],
-                    "model": scan["model"],
-                    "input_preview": (scan["user_input"] or "")[:100],
-                }
-                for scan in scan_logs
-            ]
-            st.dataframe(summary_rows, use_container_width=True, hide_index=True)
-            for scan in scan_logs:
-                title = f"{scan['timestamp'] or 'Unknown time'} · {scan['status']} · {scan['model'] or 'Unknown model'}"
-                with st.expander(title):
-                    st.caption(f"Request ID: {scan['request_id']}")
-                    st.markdown("**User input**")
-                    st.code(scan["user_input"] or "Not recorded", language=None)
-                    st.markdown("**Prompt sent to model**")
-                    st.code(scan["prompt"] or "Not recorded", language=None)
-                    st.markdown("**Raw model output**")
-                    st.code(scan["raw_model_output"] or "Not recorded", language=None)
-                    st.markdown("**Final parsed output**")
-                    st.json(scan["parsed_output"] or {"result": "Not recorded"})
-                    if scan["error"]:
-                        st.error(f"Scan error: {scan['error']}")
-    except OSError as exc:
-        st.error(f"Could not read audit logs: {exc}")
