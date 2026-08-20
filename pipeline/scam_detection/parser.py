@@ -1,6 +1,7 @@
 # pipeline/scam_detector/parser.py
 
 from typing import Dict, Any
+from LLM.validator import validate_output
 from utils import get_logger, extract_json_from_text
 
 logger = get_logger(__name__)
@@ -31,16 +32,26 @@ class OutputParser:
         # Try to extract JSON using utils function
         parsed_json = extract_json_from_text(llm_output)
         
-        if parsed_json:
-            logger.info("Successfully parsed LLM output to JSON.")
-            return parsed_json
-        else:
-            logger.warning("No JSON found in LLM output.")
-            # Return fallback result
-            fallback_result = {
-                "label": "Uncertain",
-                "reasoning": "Failed to parse response: No JSON found",
-                "intent": "Could not determine",
-                "risk_factors": []
-            }
-            return fallback_result 
+        if not parsed_json:
+            return self._fallback("No JSON found")
+
+        try:
+            # Do not trust a syntactically valid JSON response until its complete
+            # Gemini output has passed the Pydantic contract.
+            validated_response = validate_output(parsed_json)
+            logger.info("Successfully parsed and validated LLM output.")
+            return validated_response.model_dump()
+        except ValueError as error:
+            logger.warning("Gemini response failed schema validation: %s", error)
+            return self._fallback(f"Schema validation failed: {error}")
+
+    @staticmethod
+    def _fallback(error: str) -> Dict[str, Any]:
+        """Return a safe, schema-compliant result for invalid model output."""
+        logger.warning("Invalid Gemini response: %s", error)
+        return {
+            "label": "Uncertain",
+            "reasoning": f"Failed to process response: {error}",
+            "intent": "Could not determine",
+            "risk_factors": [],
+        }
