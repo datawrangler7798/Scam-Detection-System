@@ -14,7 +14,14 @@ PROJECT_ROOT = Path(__file__).parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 # API Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+try:
+    import streamlit as st
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY is not configured")
 
 # LLM Settings
 DEFAULT_MODEL = "gemini-3.6-flash"
@@ -37,26 +44,25 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 OUTPUTS_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
+
 def get_dataset_path(filename: str) -> Path:
     """
     Find dataset file in project directory.
-    
+
     Args:
         filename: Name of the dataset file
-        
+
     Returns:
-        Path to the dataset file
-        
+        Path to dataset file
+
     Raises:
         FileNotFoundError: If file not found
     """
-    # Try direct path first
     if Path(filename).exists():
         return Path(filename)
-    
-    # Try project root
+
     project_path = PROJECT_ROOT / filename
     if project_path.exists():
         return project_path
-    
+
     raise FileNotFoundError(f"Dataset '{filename}' not found")
