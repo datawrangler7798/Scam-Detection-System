@@ -13,3 +13,4 @@ __pycache__/
 
 # Runtime logs may contain scanned messages and model responses
 logs/
+.DS_Store
